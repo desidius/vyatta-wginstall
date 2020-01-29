@@ -162,12 +162,14 @@ echo "$clientcfg" > /config/wireguard/wg0-client.config
 configure
 
 #Configure the WireGuard interface
+echo "Configuring interface wg0"
 set interfaces wireguard wg0 address ${serverip}/24
 set interfaces wireguard wg0 listen-port ${wgport}
 set interfaces wireguard wg0 route-allowed-ips true
 set interfaces wireguard wg0 private-key ${privkey}
-
+commit
 #Configure firewall to let connections to WireGuard through
+echo "Setting firewall rule for port ${wgport}"
 set firewall name WAN_LOCAL rule 20 action accept
 set firewall name WAN_LOCAL rule 20 protocol udp
 set firewall name WAN_LOCAL rule 20 description 'WireGuard'
@@ -176,8 +178,9 @@ commit
 save
 fi
 
-
-echo "Server Public key is ${pubkey}"
+echo
+echo -e "Server Public key is \e[1;32m${pubkey}\e[0m"
+echo
 echo "Keys can also be found under /config/wireguard/"
 echo "To add peers simply enter configuration and run:
 set interfaces wireguard wg0 peer [Client Public Key] allowed-ips [Client VPN interface IP]/32
