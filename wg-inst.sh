@@ -1,18 +1,19 @@
 #!/bin/vbash
 source /opt/vyatta/etc/functions/script-template
 
-#if [ "$EUID" -ne 0 ]
-#  then echo "Please run as root"
-#  exit
-#fi
+if [ "$EUID" -ne 0 ]
+  then echo "Please run as root"
+  exit
+fi
 
 ##
 ## TODO
 ##
-## Add port switch for custom port
-## automate installation of interface
 ## Add simple way to set up clients
-## Remember to fix IP adding /24 or /32
+##
+## Fix firmware var
+## Auto-detection of firmware version
+## cat /etc/version | grep -oP '([v][0-9])'
 
 
 #Default firmware version
@@ -53,11 +54,12 @@ devices() {
 
 help() {
 echo "	-h              | Displays this text
-        -i [ip]         | IP address of VPN network host, do not use LAN IP
+        -i [ip]         | IP address of VPN interface
         -m [model]      | Model version: e100, e200, e300 etc.
         -m [l or list]	| List available models
-        -v [version]    | Optional, latest is installed. If you need a certain version input full version number 0.0.20191219-2
-        -f [1 or 2]   	| Optional, Firmware version default is v2"
+		-p [port]		| Optional, listening port of server. Default: 51820
+        -v [version]    | Optional, latest is installed. Example: 0.0.20191219-2
+        -f [1 or 2]   	| Optional, Firmware version. Default v2"
 }
 usage() {
 	echo "Usage: $0 [-i VPN_IP] [ -m MODEL ]"
@@ -83,8 +85,8 @@ while getopts ":f:hi:m:v:" opt; do
                 echo "Firmware version is either 1 or 2"
         fi
         ;;
-        h)
-	help
+    h)
+		help
         exit
         ;;
 	i)
@@ -97,16 +99,16 @@ while getopts ":f:hi:m:v:" opt; do
 		fi
         ;;
 	m)
-                if [ $OPTARG == "l" ] || [ $OPTARG == "list" ]
-                then
-                devices
-		exit
-                fi
-                model=$OPTARG
-        ;;
-        v)
-                version=$OPTARG
-        ;;
+		if [ $OPTARG == "l" ] || [ $OPTARG == "list" ]
+		then
+			devices
+			exit
+		fi
+		model=$OPTARG
+	;;
+	v)
+		version=$OPTARG
+	;;
 	\?) echo "Invalid option -$OPTARG, use -h for help" >&2
 	;;
   esac
@@ -133,18 +135,16 @@ else
 
 	cd /tmp
 	curl -s -L -O $debpath
-#	dpkg -i $deb && rm -f $deb
+	dpkg -i $deb && rm -f $deb
 
 #Create configuration folder
 mkdir -p /config/wireguard
 cd /config/wireguard
-echo privkey > wg-private.key
-echo pubkey > wg-public.key
-#wg genkey | tee wg-private.key | wg pubkey > wg-public.key
-#mkdir -p wg
-#cd wg
+#Generate keys
+wg genkey | tee wg-private.key | wg pubkey > wg-public.key
 chmod 600 wg*
 chmod 700 .
+#Store keys and configuration
 pubkey=$(head -n 1 wg-public.key)
 privkey=$(head -n 1 wg-private.key)
 clientcfg="[Interface]
@@ -162,26 +162,18 @@ echo "$clientcfg" > /config/wireguard/wg0-client.config
 configure
 
 #Configure the WireGuard interface
-echo "
 set interfaces wireguard wg0 address ${serverip}/24
 set interfaces wireguard wg0 listen-port ${wgport}
 set interfaces wireguard wg0 route-allowed-ips true
 set interfaces wireguard wg0 private-key ${privkey}
-"
+
 #Configure firewall to let connections to WireGuard through
-echo "
 set firewall name WAN_LOCAL rule 20 action accept
 set firewall name WAN_LOCAL rule 20 protocol udp
 set firewall name WAN_LOCAL rule 20 description 'WireGuard'
 set firewall name WAN_LOCAL rule 20 destination port ${wgport}
-"
 commit
 save
-
-echo
-echo "set interfaces wireguard wg0 peer nycBle7XPIZdFDE3Yya17mMW7SHZCdFeDNWtmaOTn3U= allowed-ips 192.168.100.72/32
-set interfaces wireguard wg0 peer EzJP0vur3aXzkC69MuOdqxBznjYdQhwIAa/5459kuyw= allowed-ips 192.168.100.71/32"
-echo
 fi
 
 
