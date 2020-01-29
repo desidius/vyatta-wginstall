@@ -1,4 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/vbash
+source /opt/vyatta/etc/functions/script-template
+
 #if [ "$EUID" -ne 0 ]
 #  then echo "Please run as root"
 #  exit
@@ -136,8 +138,8 @@ else
 #Create configuration folder
 mkdir -p /config/wireguard
 cd /config/wireguard
-echo privkey > wg-privateblic.key
-echo pubkey > wg-p.key
+echo privkey > wg-private.key
+echo pubkey > wg-public.key
 #wg genkey | tee wg-private.key | wg pubkey > wg-public.key
 #mkdir -p wg
 #cd wg
@@ -157,7 +159,6 @@ PublicKey = ${pubkey}"
 echo "$clientcfg" > /config/wireguard/wg0-client.config
 
 #Start Configuration of Interface and Firewall
-source /opt/vyatta/etc/functions/script-template
 configure
 
 #Configure the WireGuard interface
