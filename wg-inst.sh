@@ -87,7 +87,8 @@ while getopts ":f:hi:m:v:" opt; do
         ;;
 	i)
 		if [[ $OPTARG =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-			serverip=$OPTARG  
+			serverip=$OPTARG 
+			servernet=$(echo $OPTARG | cut -d"." -f1-3).0
 		else
 			echo "Please use a valid ip in the form 10.0.0.1"
 			exit
@@ -133,46 +134,61 @@ else
 #	dpkg -i $deb && rm -f $deb
 
 #Create configuration folder
-#mkdir -p /config/wireguard
-#cd /config/wireguard
+mkdir -p /config/wireguard
+cd /config/wireguard
+echo privkey > wg-privateblic.key
+echo pubkey > wg-p.key
 #wg genkey | tee wg-private.key | wg pubkey > wg-public.key
-mkdir -p wg
-cd wg
+#mkdir -p wg
+#cd wg
 chmod 600 wg*
 chmod 700 .
 pubkey=$(head -n 1 wg-public.key)
 privkey=$(head -n 1 wg-private.key)
+clientcfg="[Interface]
+Address = 10.0.0.$(cat /dev/urandom | tr -dc '0-9' | fold -w 2 | head -n 1)/32
+PrivateKey = $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 44 | head -n 1)
 
-echo Server Public key is ${pubkey}
-echo Keys can also be found under /config/wireguard/
+[Peer]
+AllowedIPs = ${servernet}/24
+Endpoint = ${extip}:51820
+PublicKey = ${pubkey}"
 
-echo " 
-#Enter Configuration mode
+echo "$clientcfg" > /config/wireguard/wg0-client.config
+
+#Start Configuration of Interface and Firewall
+source /opt/vyatta/etc/functions/script-template
 configure
 
 #Configure the WireGuard interface
+echo "
 set interfaces wireguard wg0 address ${serverip}/24
 set interfaces wireguard wg0 listen-port ${wgport}
 set interfaces wireguard wg0 route-allowed-ips true
 set interfaces wireguard wg0 private-key ${privkey}
-
-#Configure firewall to let connections through
+"
+#Configure firewall to let connections to WireGuard through
+echo "
 set firewall name WAN_LOCAL rule 20 action accept
 set firewall name WAN_LOCAL rule 20 protocol udp
 set firewall name WAN_LOCAL rule 20 description 'WireGuard'
 set firewall name WAN_LOCAL rule 20 destination port ${wgport}
 "
+commit
+save
 
 echo
-echo "set interfaces wireguard wg0 peer nycBle7XPIZdFDE3Yya17mMW7SHZCdFeDNWtmaOTn3U= allowed-ips 192.168.100.72/32 #Chromebook
-set interfaces wireguard wg0 peer EzJP0vur3aXzkC69MuOdqxBznjYdQhwIAa/5459kuyw= allowed-ips 192.168.100.71/32 #AdvaniaLap"
+echo "set interfaces wireguard wg0 peer nycBle7XPIZdFDE3Yya17mMW7SHZCdFeDNWtmaOTn3U= allowed-ips 192.168.100.72/32
+set interfaces wireguard wg0 peer EzJP0vur3aXzkC69MuOdqxBznjYdQhwIAa/5459kuyw= allowed-ips 192.168.100.71/32"
 echo
 fi
 
 
-
-
-
-
-
-
+echo "Server Public key is ${pubkey}"
+echo "Keys can also be found under /config/wireguard/"
+echo "To add peers simply enter configuration and run:
+set interfaces wireguard wg0 peer [Client Public Key] allowed-ips [Client VPN interface IP]/32
+" 
+echo 
+echo "Sample client configuration (also stored in config folder):"
+echo "${clientcfg}"
