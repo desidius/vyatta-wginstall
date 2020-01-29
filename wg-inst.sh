@@ -171,7 +171,7 @@ commit
 #Configure firewall to let connections to WireGuard through
 echo "Setting firewall rule for port ${wgport}"
 set firewall name WAN_LOCAL rule 20 action accept
-set firewall name WAN_LOCAL rule 20 protocol udp
+set firewall name WAN_LOCAL rulerfac 20 protocol udp
 set firewall name WAN_LOCAL rule 20 description 'WireGuard'
 set firewall name WAN_LOCAL rule 20 destination port ${wgport}
 commit
