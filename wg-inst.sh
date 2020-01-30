@@ -1,9 +1,10 @@
 #!/bin/vbash
-source /opt/vyatta/etc/functions/script-template
+#source /opt/vyatta/etc/functions/script-template
+run="/opt/vyatta/sbin/vyatta-cfg-cmd-wrapper"
 
-if [ "$EUID" -ne 0 ]
-  then echo "Please run as root"
-  exit
+if [ "$EUID" -eq 0 ]
+	then echo "Please do not run as root"
+	exit
 fi
 
 ##
@@ -135,18 +136,12 @@ else
 
 	cd /tmp
 	curl -s -L -O $debpath
-	dpkg -i $deb && rm -f $deb
+	sudo dpkg -i $deb && rm -f $deb
 
-#Create configuration folder
-mkdir -p /config/wireguard
-cd /config/wireguard
+sudo wg genkey | tee /config/auth/wg-private.key | wg pubkey | tee /config/auth/wg-public.key
 #Generate keys
-wg genkey | tee wg-private.key | wg pubkey > wg-public.key
-chmod 600 wg*
-chmod 700 .
 #Store keys and configuration
-pubkey=$(head -n 1 wg-public.key)
-privkey=$(head -n 1 wg-private.key)
+pubkey=$(head -n 1 /config/auth/wg-public.key)
 clientcfg="[Interface]
 Address = 10.0.0.$(cat /dev/urandom | tr -dc '0-9' | fold -w 2 | head -n 1)/32
 PrivateKey = $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 44 | head -n 1)
@@ -156,26 +151,31 @@ AllowedIPs = ${servernet}/24
 Endpoint = ${extip}:51820
 PublicKey = ${pubkey}"
 
+sudo mkdir -p /config/wireguard
 echo "$clientcfg" > /config/wireguard/wg0-client.config
+sudo chmod 775 -R /config/wireguard/
 
 #Start Configuration of Interface and Firewall
 configure
 
 #Configure the WireGuard interface
 echo "Configuring interface wg0"
-set interfaces wireguard wg0 address ${serverip}/24
-set interfaces wireguard wg0 listen-port ${wgport}
-set interfaces wireguard wg0 route-allowed-ips true
-set interfaces wireguard wg0 private-key ${privkey}
+$run begin
+$run set interfaces wireguard wg0 address ${serverip}/24
+$run set interfaces wireguard wg0 listen-port ${wgport}
+$run set interfaces wireguard wg0 route-allowed-ips true
+$run set interfaces wireguard wg0 private-key /config/auth/wg-private.key
+
 commit
 #Configure firewall to let connections to WireGuard through
 echo "Setting firewall rule for port ${wgport}"
-set firewall name WAN_LOCAL rule 20 action accept
-set firewall name WAN_LOCAL rulerfac 20 protocol udp
-set firewall name WAN_LOCAL rule 20 description 'WireGuard'
-set firewall name WAN_LOCAL rule 20 destination port ${wgport}
-commit
-save
+$run set firewall name WAN_LOCAL rule 20 action accept
+$run set firewall name WAN_LOCAL rule 20 protocol udp
+$run set firewall name WAN_LOCAL rule 20 description 'WireGuard'
+$run set firewall name WAN_LOCAL rule 20 destination port ${wgport}
+$run commit
+$run save
+$run end
 fi
 
 echo
