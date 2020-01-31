@@ -2,19 +2,9 @@
 run="/opt/vyatta/sbin/vyatta-cfg-cmd-wrapper"
 
 if [ "$EUID" -eq 0 ]
-	then echo "Please do not run as root"
+	then echo "Please do not run as root, verify this has no effects then remove"
 	exit
 fi
-
-##
-## TODO
-##
-## Fix Key generation, change ownership?
-##
-## Fix firmware var
-## Auto-detection of firmware version
-## cat /etc/version | grep -oP '([v][0-9])'
-
 
 #Default firmware version
 firmware="v2.0-"
@@ -83,13 +73,6 @@ function valid_ip() { #https://www.linuxjournal.com/content/validating-ip-addres
     return $stat
 }
 
-#This is not double checked
-addpeer() {
-	$run begin
-	$run set interfaces wireguard wg0 peer ${1} allowed-ips ${2}/32
-	$run end
-}
-
 if [ $# -eq 0 ]
 	then
 	usage
@@ -146,8 +129,13 @@ while getopts ":a:f:hi:m:v:" opt; do
 done
 
 #Add peer
-if [$clkey] && [$ip]; then
-	addpeer $clkey $ip
+if [[ ! -z "$clkey" && ! -z "$ip" ]]; then
+	$run begin
+	$run set interfaces wireguard wg0 peer ${clkey} allowed-ips ${ip}/32
+	$run commit
+	$run save
+	$run end
+	exit
 fi
 
 
@@ -203,10 +191,10 @@ $run set interfaces wireguard wg0 route-allowed-ips true
 $run set interfaces wireguard wg0 private-key /config/auth/wg-private.key
 #Configure firewall to let connections to WireGuard through
 echo "Setting firewall rule for port ${wgport}"
-$run set firewall name WAN_LOCAL rule 20 action accept
-$run set firewall name WAN_LOCAL rule 20 protocol udp
-$run set firewall name WAN_LOCAL rule 20 description 'WireGuard'
-$run set firewall name WAN_LOCAL rule 20 destination port ${wgport}
+$run set firewall name WAN_LOCAL rule 15 action accept
+$run set firewall name WAN_LOCAL rule 15 protocol udp
+$run set firewall name WAN_LOCAL rule 15 description 'WireGuard'
+$run set firewall name WAN_LOCAL rule 15 destination port ${wgport}
 $run commit
 $run save
 $run end
