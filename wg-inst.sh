@@ -1,61 +1,110 @@
 #!/bin/vbash
-run="/opt/vyatta/sbin/vyatta-cfg-cmd-wrapper"
-
 if [ "$EUID" -eq 0 ]
-	then echo "Please do not run as root, verify this has no effects then remove"
+	then echo "Please do not run as root" #View vyatta docs regarding configuration as root then remove this check if you wish
 	exit
 fi
 
-#Default firmware version
-firmware="v2.0-"
-#Path to git
-gitpath="https://github.com/Lochnair/vyatta-wireguard/releases/download/"
-#Get the latest version
-version=$(curl --silent "https://api.github.com/repos/Lochnair/vyatta-wireguard/releases" | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-#External IP
-extip=$(curl -s https://ipinfo.io/ip)
-#Host port
-wgport=51820
+# There's no real validation for anything here..
+# Router Model, Router FW, Router Firewall Rule# and WG interface have to be changed in this file for now.
 
-devices() {
-	echo "
-	E50
-		EdgeRouter X
-	E100
-		EdgeRouter Lite
-		EdgeRouter PoE
-	E200
-		EdgeRouter 8
-		EdgeRouter Pro
-	E300
-		EdgeRouter 4
-		EdgeRouter 6P
-		EdgeRouter 12
-	E1000
-		EdgeRouter Infinity
-	UGW3
-		UniFi Security Gateway
-	UGW4
-		UniFi Security Gateway Pro 4
-	UGWXG
-		UniFi Security Gateway XG 8"
-  exit 2
-}
+#Used to enter configuration and adding rules
+run="/opt/vyatta/sbin/vyatta-cfg-cmd-wrapper"
 
-help() {
-echo "	-h              | Displays this text
-		-a [key]		| Add peer, use with -i
-        -i [ip]         | IP address of VPN interface
-        -m [model]      | Model version: e100, e200, e300 etc.
-        -m [l or list]	| List available models
-		-p [port]		| Optional, listening port of server. Default: 51820
-        -v [version]    | Optional, latest is installed. Example: 0.0.20191219-2
-        -f [1 or 2]   	| Optional, Firmware version. Default v2"
-}
-usage() {
-	echo "Usage: $0 [-i VPN_IP] [ -m MODEL ]"
-	echo "For help use -h"
-	exit 2
+#Router defaults
+router_external_ip=$(curl -s http://whatismyip.akamai.com/) #Get external IP of router
+router_model=$(cat /etc/version | grep -oP 'e[0-9]{2,3}') #This is most likely not a catchall
+router_fw=$(cat /etc/version | grep -oP "(v[0-9]{1})") #Check device firmware, same as above - This has to be changed manually if autodetection does not work
+
+#WireGuard Defaults
+wg_package_installed=$(dpkg-query -s wireguard 2>/dev/null | grep -c "ok installed") #Check DPKG for installation status
+wg_package_version=$(dpkg -s wireguard | grep '^Version:' | awk '{print $2}') #Check DPKG for WG version
+wg_port=51820 #Default WG port
+wg_interface_ip=10.0.0.1
+wg_interface=0 #Default WG interface number (wg#)
+wg_rule=15
+
+if [[ $router_fw == "v2" ]]; then git_router_fw="v2.0-"; fi #Not a good fix
+git_package_latest=$(curl --silent "https://api.github.com/repos/Lochnair/vyatta-wireguard/releases" | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+git_download_path="https://github.com/Lochnair/vyatta-wireguard/releases/download/"
+git_deb_file=wireguard-${git_router_fw}${router_model}-${git_package_latest}.deb
+git_deb_path=${git_download_path}${git_package_latest}/${git_deb_file}
+
+
+wg_cfg() {
+	case $1 in
+		host)
+			echo "Configuring interface ${wg_interface_ip}/24:${wg_port} on wg${wg_interface}"
+
+			if [[ $(ls /sys/class/net/ | grep -c "wg${wg_interface}") -eq 1 ]]; then 
+				echo -e "\033[0;31mInterface wg${wg_interface} is already configured\033[0m"
+				echo "Stopping.."
+				echo
+				exit 1
+			fi
+			$run begin
+			$run set interfaces wireguard wg${wg_interface} address ${wg_interface_ip}/24
+			$run set interfaces wireguard wg${wg_interface} listen-port ${wg_port}
+			$run set interfaces wireguard wg${wg_interface} route-allowed-ips true
+			$run set interfaces wireguard wg${wg_interface} private-key /config/auth/wg-private.key
+			$run commit
+			$run save
+			$run end
+		;;
+		firewall)
+			echo "Adding firewall rule ${wg_rule} for WireGuard"
+			$run begin
+			$run set firewall name WAN_LOCAL rule 15 action accept
+			$run set firewall name WAN_LOCAL rule 15 protocol udp
+			$run set firewall name WAN_LOCAL rule 15 description 'WireGuard'
+			$run set firewall name WAN_LOCAL rule 15 destination port ${wg_port}
+			$run commit
+			$run save
+			$run end
+		;;
+		peer)
+			echo "Adding peer ${peer_ip}/32 with publick key ${peer_public_key} to interface ${wg_interface}"
+			$run begin
+			$run set interfaces wireguard wg${wg_interface} peer ${peer_public_key} allowed-ips ${peer_ip}/32
+			$run commit
+			$run save
+			$run end
+			echo -e "\e[1;32mPeer added\033[0m"
+			echo
+			exit 0
+		;;
+		view)
+			echo -e "\nDevice information and default configuration"
+			echo -e "Model:		${router_model}\nFirmware:	${router_fw}\nExternal IP:	${router_external_ip}\nWG port:	${wg_port}\nWG interface:	wg${wg_interface}\nWG interf. IP:	${wg_interface_ip}"
+		;;
+		package)
+			echo -e "\e[1;32mLatest WireGuard version is: ${wg_package_version}\033[0m"
+			if [[ $wg_package_installed -eq 1 ]]; then
+				echo -e "\033[0;31mWireGuard version ${wg_package_version} is installed\033[0m"
+				read -r -p "Do you with to continue to (re)Install the package [y/N] " response
+				case "$response" in
+					[yY][eE][sS]|[yY]) 
+						wg_install_deb=1
+						;;
+					*)
+						echo "Package installation will be skipped"
+						wg_install_deb=0
+						;;
+				esac
+			fi
+			if  [[ $wg_install_deb -eq 1 ]]; then 
+
+				$deb_http_response=$(curl -w %{http_code} -s -I -o /dev/null $git_deb_path)
+				if [ $deb_http_response == "404" ]; then
+					echo Package was not found on git, please verify that VERSION and FIRMWARE are correct.
+					echo This might mean a package does not exist for your current setup.
+					echo For more information visit https://github.com/Lochnair/vyatta-wireguard/releases/
+
+					cd /tmp
+					curl -s -L -O $debpath
+					sudo dpkg -i $deb && rm -f $deb #change SUDO?
+			fi
+		;;
+	esac
 }
 
 function valid_ip() { #https://www.linuxjournal.com/content/validating-ip-address-bash-script
@@ -73,139 +122,100 @@ function valid_ip() { #https://www.linuxjournal.com/content/validating-ip-addres
     return $stat
 }
 
+help() {
+echo "Optional, run script to install with defaults.
+		-h              | Displays this text
+		-a [ip]			| Peer IP to add, use with -x
+		-x [pubkey]		| Client public key
+        -i [ip]         | IP of interface
+		-p [port]		| listening port of server"
+}
+
+
 if [ $# -eq 0 ]
 	then
-	usage
+	help
 fi
 
 while getopts ":a:f:hi:m:v:" opt; do
   case $opt in
 	a)
-		if [[ ${#OPTARG} != 44 ]]; then
-			echo "Please enter peer public key"
-			exit
+		if valid_ip $OPTARG; then
+			peer_ip=$OPTARG
 		else
-			clkey=$OPTARG
+			echo "Please use a valid ip in the form 10.0.0.1" >&2
+			exit
 		fi
 		;;
-	f)
-        if [[ $OPTARG =~ ^[1-2]+$ ]];then
-            if [ $OPTARG == 1 ]; then
-			firmware="" 
-		else
-			firmware="v2.0-"
-		fi
-        else
-                echo "Firmware version is either 1 or 2"
-        fi
-        ;;
     h)
 		help
         exit
         ;;
 	i)
 		if valid_ip $OPTARG; then
-			ip=$OPTARG 
-			servernet=$(echo $OPTARG | cut -d"." -f1-3).0
+			wg_interface_ip=$OPTARG 
+			peer_allowed_ips=$(echo $OPTARG | cut -d"." -f1-3).0
 		else
-			echo "Please use a valid ip in the form 10.0.0.1"
+			echo "Please use a valid ip in the form 10.0.0.1" >&2
 			exit
 		fi
-        ;;
-	m)
-		if [ $OPTARG == "l" ] || [ $OPTARG == "list" ]
-		then
-			devices
-			exit
+	;;
+	p)
+		if [[ $OPTARG =~ ^[0-9]+$ ]]; then
+			wg_port=$OPTARG
+		else
+			echo "Port is not a valid number"
+			exit 1
 		fi
-		model=$OPTARG
 	;;
-	v)
-		version=$OPTARG
+	x)
+	if [[ ${#OPTARG} != 44 ]]; then #Might have to change this
+		echo "Please enter a proper public key" >&2
+		exit
+	else
+		peer_public_key=$OPTARG
+	fi
 	;;
-	\?) echo "Invalid option -$OPTARG, use -h for help" >&2
+	\?) echo "Invalid option, use -h for help" >&2
 	;;
   esac
 done
 
 #Add peer
-if [[ ! -z "$clkey" && ! -z "$ip" ]]; then
-	$run begin
-	$run set interfaces wireguard wg0 peer ${clkey} allowed-ips ${ip}/32
-	$run commit
-	$run save
-	$run end
-	exit
+if [[ ! -z "$peer_public_key" && ! -z "$peer_ip" ]]; then
+	wg_cfg peer
 fi
 
 
-if [ -z $model ] || [ -z $ip ]; then
-	echo "Please define model, IP"
-	exit
-fi
 
-#Fetch lates package and install
-deb=wireguard-${firmware}${model}-${version}.deb
-debpath=${gitpath}${version}/${deb}
-status=$(curl -I -s $debpath | head -n 1|cut -d$' ' -f2)
+#Generate Keys after install
+wg genkey | tee /config/auth/wg-private.key | wg pubkey | tee /config/auth/wg-public.key
+#Store public key in var so it does not need to be called again
+wg_public_key=$(head -n 1 /config/auth/wg-public.key)
 
-if [ $status == "404" ]; then
-	echo Package was not found on git, please verify that VERSION and FIRMWARE are correct.
-	echo This might mean a package does not exist for your current setup.
-	echo For more information visit https://github.com/Lochnair/vyatta-wireguard/releases/
-
-else
-	echo "Fetching deb package and installing"
-	echo "Version: ${version}"
-
-	cd /tmp
-	curl -s -L -O $debpath
-	sudo dpkg -i $deb && rm -f $deb
-
-sudo wg genkey | tee /config/auth/wg-private.key | wg pubkey | tee /config/auth/wg-public.key
-#Generate keys
-#Store keys and configuration
-pubkey=$(head -n 1 /config/auth/wg-public.key)
-clientcfg="[Interface]
+#Create an example client config
+peer_config="[Interface]
 Address = 10.0.0.$(cat /dev/urandom | tr -dc '0-9' | fold -w 2 | head -n 1)/32
 PrivateKey = $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 44 | head -n 1)
 
 [Peer]
-AllowedIPs = ${servernet}/24
-Endpoint = ${extip}:51820
-PublicKey = ${pubkey}"
+AllowedIPs = ${peer_allowed_ips}/24
+Endpoint = ${router_external_ip}:51820
+PublicKey = ${wg_public_key}"
 
 mkdir -p /config/wireguard
-echo "$clientcfg" > /config/wireguard/wg0-client.config
+echo "$peer_config" > /config/wireguard/wg${wg_interface}-peer.config
 chmod 775 -R /config/wireguard/
 
-#Start Configuration of Interface and Firewall
-configure
 
-#Configure the WireGuard interface
-echo "Configuring interface wg0"
-$run begin
-$run set interfaces wireguard wg0 address ${ip}/24
-$run set interfaces wireguard wg0 listen-port ${wgport}
-$run set interfaces wireguard wg0 route-allowed-ips true
-$run set interfaces wireguard wg0 private-key /config/auth/wg-private.key
-#Configure firewall to let connections to WireGuard through
-echo "Setting firewall rule for port ${wgport}"
-$run set firewall name WAN_LOCAL rule 15 action accept
-$run set firewall name WAN_LOCAL rule 15 protocol udp
-$run set firewall name WAN_LOCAL rule 15 description 'WireGuard'
-$run set firewall name WAN_LOCAL rule 15 destination port ${wgport}
-$run commit
-$run save
-$run end
 fi
 echo
 echo
-echo -e "Server Public key is \e[1;32m${pubkey}\e[0m"
-echo "Generated keys can be found in /config/wireguard/"
+echo -e "Server Public key is \e[1;32m${wg_public_key}\e[0m"
+echo "Generated keys can be found in /config/auth/"
 echo 
-echo "To add peers simply enter configuration and run:
-set interfaces wireguard wg0 peer [Client Public Key] allowed-ips [Client VPN interface IP]/32" 
+echo "To add peers simply use the script with the following arguments:
+$0 -a [Peer IP] -x [Peer public key]" 
 echo 
 echo "Sample client configuration (also stored in config folder):"
-echo "${clientcfg}"
+echo "${peer_config}"
