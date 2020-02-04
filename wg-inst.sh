@@ -33,7 +33,7 @@ git_deb_path=${git_download_path}${git_package_latest}/${git_deb_file}
 wg_cfg() {
 	case $1 in
 		host)
-			echo "Configuring interface ${wg_interface_ip}/24:${wg_port} on wg${wg_interface}"
+			echo "Configuring interface wg${wg_interface} ${wg_interface_ip}/24:${wg_port}"
 
 			if [[ $(ls /sys/class/net/ | grep -c "wg${wg_interface}") -eq 1 ]]; then 
 				echo -e "\033[0;31mInterface wg${wg_interface} is already configured\033[0m"
@@ -70,17 +70,16 @@ wg_cfg() {
 			$run end
 			echo -e "\e[1;32mPeer added\033[0m"
 			echo
-			exit 0
 		;;
 		view)
-			echo -e "\nDevice information and default configuration"
+			echo -e "\nDevice information and configuration"
 			echo -e "Model:		${router_model}\nFirmware:	${router_fw}\nExternal IP:	${router_external_ip}\nWG port:	${wg_port}\nWG interface:	wg${wg_interface}\nWG interf. IP:	${wg_interface_ip}"
 		;;
 		package)
 			echo -e "\e[1;32mLatest WireGuard version is: ${wg_package_version}\033[0m"
 			if [[ $wg_package_installed -eq 1 ]]; then
 				echo -e "\033[0;31mWireGuard version ${wg_package_version} is installed\033[0m"
-				read -r -p "Do you with to continue to (re)Install the package [y/N] " response
+				read -r -p "Do you with to continue with installation of the package [y/N] " response
 				case "$response" in
 					[yY][eE][sS]|[yY]) 
 						wg_install_deb=1
@@ -93,7 +92,7 @@ wg_cfg() {
 			fi
 			if  [[ $wg_install_deb -eq 1 ]]; then 
 
-				$deb_http_response=$(curl -w %{http_code} -s -I -o /dev/null $git_deb_path)
+				deb_http_response=$(curl -w %{http_code} -s -I -o /dev/null $git_deb_path)
 				if [ $deb_http_response == "404" ]; then
 					echo Package was not found on git, please verify that VERSION and FIRMWARE are correct.
 					echo This might mean a package does not exist for your current setup.
@@ -102,6 +101,7 @@ wg_cfg() {
 					cd /tmp
 					curl -s -L -O $debpath
 					sudo dpkg -i $deb && rm -f $deb #change SUDO?
+				fi
 			fi
 		;;
 	esac
@@ -137,7 +137,7 @@ if [ $# -eq 0 ]
 	help
 fi
 
-while getopts ":a:f:hi:m:v:" opt; do
+while getopts ":a:hi:p:x:" opt; do
   case $opt in
 	a)
 		if valid_ip $OPTARG; then
@@ -157,7 +157,7 @@ while getopts ":a:f:hi:m:v:" opt; do
 			peer_allowed_ips=$(echo $OPTARG | cut -d"." -f1-3).0
 		else
 			echo "Please use a valid ip in the form 10.0.0.1" >&2
-			exit
+			exit 1
 		fi
 	;;
 	p)
@@ -171,7 +171,7 @@ while getopts ":a:f:hi:m:v:" opt; do
 	x)
 	if [[ ${#OPTARG} != 44 ]]; then #Might have to change this
 		echo "Please enter a proper public key" >&2
-		exit
+		exit 1
 	else
 		peer_public_key=$OPTARG
 	fi
@@ -184,9 +184,23 @@ done
 #Add peer
 if [[ ! -z "$peer_public_key" && ! -z "$peer_ip" ]]; then
 	wg_cfg peer
+	exit 1
 fi
 
+#Setup and configure WireGuard
+wg_cfg view
+echo "Verify this information is correct before installing"
+read -r -p "Is the information above correct [Y/n] " response
+case "$response" in
+	[nN][oO]|[nN]) 
+		echo -e "\nCancelling..\n"
+		exit
+	;;
+esac
 
+wg_cfg package
+wg_cfg host
+wg_cfg firewall
 
 #Generate Keys after install
 wg genkey | tee /config/auth/wg-private.key | wg pubkey | tee /config/auth/wg-public.key
