@@ -29,7 +29,6 @@ git_download_path="https://github.com/Lochnair/vyatta-wireguard/releases/downloa
 git_deb_file=wireguard-${git_router_fw}${router_model}-${git_package_latest}.deb
 git_deb_path=${git_download_path}${git_package_latest}/${git_deb_file}
 
-
 wg_cfg() {
 	case $1 in
 		host)
@@ -91,7 +90,6 @@ wg_cfg() {
 				esac
 			fi
 			if  [[ $wg_install_deb -eq 1 ]]; then 
-
 				deb_http_response=$(curl -w %{http_code} -s -I -o /dev/null $git_deb_path)
 				if [ $deb_http_response == "404" ]; then
 					echo Package was not found on git, please verify that VERSION and FIRMWARE are correct.
@@ -124,16 +122,15 @@ function valid_ip() { #https://www.linuxjournal.com/content/validating-ip-addres
 
 help() {
 echo "Optional, run script to install with defaults.
-		-h              | Displays this text
-		-a [ip]			| Peer IP to add, use with -x
-		-x [pubkey]		| Client public key
-        -i [ip]         | IP of interface
-		-p [port]		| listening port of server"
+	-h		| Displays this text
+	-a [ip]		| Peer IP to add, use with -x
+	-x [pubkey]	| Client public key
+	-i [ip]		| IP of interface
+	-p [port]	| listening port of server"
 }
 
 
-if [ $# -eq 0 ]
-	then
+if [ $# -eq 0 ]; then 
 	help
 fi
 
@@ -153,8 +150,7 @@ while getopts ":a:hi:p:x:" opt; do
         ;;
 	i)
 		if valid_ip $OPTARG; then
-			wg_interface_ip=$OPTARG 
-			peer_allowed_ips=$(echo $OPTARG | cut -d"." -f1-3).0
+			wg_interface_ip=$OPTARG
 		else
 			echo "Please use a valid ip in the form 10.0.0.1" >&2
 			exit 1
@@ -169,14 +165,14 @@ while getopts ":a:hi:p:x:" opt; do
 		fi
 	;;
 	x)
-	if [[ ${#OPTARG} != 44 ]]; then #Might have to change this
-		echo "Please enter a proper public key" >&2
-		exit 1
-	else
-		peer_public_key=$OPTARG
-	fi
+		if [[ ${#OPTARG} != 44 ]]; then #Might have to change this
+			echo "Please enter a proper public key" >&2
+			exit 1
+		else
+			peer_public_key=$OPTARG
+		fi
 	;;
-	\?) echo "Invalid option, use -h for help" >&2
+	\?) echo "Invalid option, use -h for help" >&2 && exit
 	;;
   esac
 done
@@ -199,12 +195,10 @@ case "$response" in
 esac
 
 wg_cfg package
+wg genkey | sudo tee /config/auth/wg-private.key | wg pubkey | sudo tee /config/auth/wg-public.key
 wg_cfg host
 wg_cfg firewall
 
-#Generate Keys after install
-wg genkey | tee /config/auth/wg-private.key | wg pubkey | tee /config/auth/wg-public.key
-#Store public key in var so it does not need to be called again
 wg_public_key=$(head -n 1 /config/auth/wg-public.key)
 
 #Create an example client config
@@ -213,16 +207,10 @@ Address = 10.0.0.$(cat /dev/urandom | tr -dc '0-9' | fold -w 2 | head -n 1)/32
 PrivateKey = $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 44 | head -n 1)
 
 [Peer]
-AllowedIPs = ${peer_allowed_ips}/24
+AllowedIPs = $(echo $wg_interface_ip | cut -d"." -f1-3).0/24
 Endpoint = ${router_external_ip}:51820
 PublicKey = ${wg_public_key}"
 
-mkdir -p /config/wireguard
-echo "$peer_config" > /config/wireguard/wg${wg_interface}-peer.config
-chmod 775 -R /config/wireguard/
-
-
-fi
 echo
 echo
 echo -e "Server Public key is \e[1;32m${wg_public_key}\e[0m"
@@ -231,5 +219,5 @@ echo
 echo "To add peers simply use the script with the following arguments:
 $0 -a [Peer IP] -x [Peer public key]" 
 echo 
-echo "Sample client configuration (also stored in config folder):"
+echo "Sample client configuration:"
 echo "${peer_config}"
